@@ -17,14 +17,14 @@ DRIVE_FOLDER_ID = "1Hvr7ARrIa9UL72jJqnhutkt3d1x8r9nT"
 
 URLS_BUSQUEDA = [
     # Malvín (Publicados hoy hasta 40.000 UYU)
-    "https://listado.mercadolibre.com.uy/inmuebles/apartamentos/alquiler/montevideo/malvin/_PriceRange_0UYU-40000UYU_PublishedToday_YES_NoIndex_True",
-    "https://listado.mercadolibre.com.uy/inmuebles/casas/alquiler/montevideo/malvin/_PriceRange_0UYU-40000UYU_PublishedToday_YES_NoIndex_True",
+    ("Malvín Aptos Hoy", "https://listado.mercadolibre.com.uy/inmuebles/apartamentos/alquiler/montevideo/malvin/_PriceRange_0UYU-40000UYU_PublishedToday_YES_NoIndex_True"),
+    ("Malvín Casas Hoy", "https://listado.mercadolibre.com.uy/inmuebles/casas/alquiler/montevideo/malvin/_PriceRange_0UYU-40000UYU_PublishedToday_YES_NoIndex_True"),
     # Punta Gorda (Publicados hoy hasta 40.000 UYU)
-    "https://listado.mercadolibre.com.uy/inmuebles/apartamentos/alquiler/montevideo/punta-gorda/_PriceRange_0UYU-40000UYU_PublishedToday_YES_NoIndex_True",
-    "https://listado.mercadolibre.com.uy/inmuebles/casas/alquiler/montevideo/punta-gorda/_PriceRange_0UYU-40000UYU_PublishedToday_YES_NoIndex_True",
+    ("Punta Gorda Aptos Hoy", "https://listado.mercadolibre.com.uy/inmuebles/apartamentos/alquiler/montevideo/punta-gorda/_PriceRange_0UYU-40000UYU_PublishedToday_YES_NoIndex_True"),
+    ("Punta Gorda Casas Hoy", "https://listado.mercadolibre.com.uy/inmuebles/casas/alquiler/montevideo/punta-gorda/_PriceRange_0UYU-40000UYU_PublishedToday_YES_NoIndex_True"),
     # Carrasco (Publicados hoy hasta 40.000 UYU)
-    "https://listado.mercadolibre.com.uy/inmuebles/apartamentos/alquiler/montevideo/carrasco/_PriceRange_0UYU-40000UYU_PublishedToday_YES_NoIndex_True",
-    "https://listado.mercadolibre.com.uy/inmuebles/casas/alquiler/montevideo/carrasco/_PriceRange_0UYU-40000UYU_PublishedToday_YES_NoIndex_True",
+    ("Carrasco Aptos Hoy", "https://listado.mercadolibre.com.uy/inmuebles/apartamentos/alquiler/montevideo/carrasco/_PriceRange_0UYU-40000UYU_PublishedToday_YES_NoIndex_True"),
+    ("Carrasco Casas Hoy", "https://listado.mercadolibre.com.uy/inmuebles/casas/alquiler/montevideo/carrasco/_PriceRange_0UYU-40000UYU_PublishedToday_YES_NoIndex_True"),
 ]
 
 HEADERS = {
@@ -57,13 +57,9 @@ def extraer_publicaciones_del_dia():
     total_evaluadas = 0
     urls_vistas = set()
 
-    for url_cat in URLS_BUSQUEDA:
+    for etiqueta, url_cat in URLS_BUSQUEDA:
         try:
             resp = requests.get(url_cat, headers=HEADERS, timeout=15)
-            if resp.status_code != 200:
-                print(f"[HTTP {resp.status_code}] Sin resultados en: {url_cat.split('/')[-1]}")
-                continue
-
             soup = BeautifulSoup(resp.text, "html.parser")
             enlaces = soup.find_all("a", href=re.compile(r"/MLU-\d+"))
             
@@ -77,11 +73,12 @@ def extraer_publicaciones_del_dia():
                 publicaciones_candidatas.append(raw_url)
                 candidatas_categoria += 1
 
-            cat_nombre = url_cat.split("inmuebles/")[-1].split("/_")[0]
-            print(f"[{cat_nombre}] Encontradas hoy: {candidatas_categoria}")
+            print(f"[{etiqueta}] Status: {resp.status_code} | Bytes: {len(resp.text)} | Encontradas: {candidatas_categoria}")
+            if len(enlaces) == 0 and len(resp.text) < 30000:
+                print(f"  Aviso: Respuesta reducida ({len(resp.text)} bytes). Título: {soup.title.string if soup.title else 'Sin título'}")
 
         except Exception as e:
-            print(f"Error escaneando categoría {url_cat}: {e}")
+            print(f"Error escaneando {etiqueta} ({url_cat}): {e}")
 
     return publicaciones_candidatas, total_evaluadas
 
@@ -117,7 +114,7 @@ def evaluar_con_gemini(textos_avisos: List[str]) -> List[EvaluacionAlquiler]:
     client = genai.Client(api_key=os.environ.get("GEMINI_API_KEY"))
     cumplen = []
     
-    # Procesar en lotes de 10 avisos para máxima precisión
+    # Procesar en lotes de 10 avisos
     batch_size = 10
     for i in range(0, len(textos_avisos), batch_size):
         batch = textos_avisos[i : i + batch_size]
