@@ -34,16 +34,26 @@ HEADERS = {
     "Accept-Language": "es-UY,es;q=0.9",
 }
 
-def descargar_html(url: str, timeout: int = 25) -> str:
-    """Descarga el HTML utilizando ScraperAPI si está configurada, o petición directa como respaldo."""
+def descargar_html(url: str, timeout: int = 45) -> str:
+    """Descarga el HTML utilizando ScraperAPI con renderizado JS si está configurada, o petición directa."""
     scraper_key = os.environ.get("SCRAPER_API_KEY")
     
     if scraper_key:
-        proxy_url = f"https://api.scraperapi.com?api_key={scraper_key}&url={urllib.parse.quote(url)}"
+        # Usar render=true y country_code=uy para resolver el desafío anti-bot (Muralla) de MercadoLibre
+        proxy_url = f"https://api.scraperapi.com?api_key={scraper_key}&url={urllib.parse.quote(url)}&render=true&country_code=uy"
         try:
             resp = requests.get(proxy_url, timeout=timeout)
-            if resp.status_code == 200 and len(resp.text) > 5000:
+            if resp.status_code == 200 and ("MLU-" in resp.text or len(resp.text) > 40000):
                 return resp.text
+            
+            # Intento alternativo solo con render=true
+            proxy_url_alt = f"https://api.scraperapi.com?api_key={scraper_key}&url={urllib.parse.quote(url)}&render=true"
+            resp_alt = requests.get(proxy_url_alt, timeout=timeout)
+            if resp_alt.status_code == 200 and ("MLU-" in resp_alt.text or len(resp_alt.text) > 40000):
+                return resp_alt.text
+            
+            # Si devolvió página de verificación reducida, loguear aviso
+            print(f"Aviso ScraperAPI: Respuesta de {len(resp.text)} bytes sin listados (desafío activo).")
         except Exception as e:
             print(f"Aviso ScraperAPI ({url[:50]}...): {e}")
 
