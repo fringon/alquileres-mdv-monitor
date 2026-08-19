@@ -1,6 +1,7 @@
 import os
 import json
 import re
+import urllib.parse
 from datetime import datetime
 from typing import List, Optional
 import requests
@@ -33,6 +34,29 @@ HEADERS = {
     "Accept-Language": "es-UY,es;q=0.9",
 }
 
+def descargar_html(url: str, timeout: int = 25) -> str:
+    """Descarga el HTML utilizando ScraperAPI si está configurada, o petición directa como respaldo."""
+    scraper_key = os.environ.get("SCRAPER_API_KEY")
+    
+    if scraper_key:
+        proxy_url = f"https://api.scraperapi.com?api_key={scraper_key}&url={urllib.parse.quote(url)}"
+        try:
+            resp = requests.get(proxy_url, timeout=timeout)
+            if resp.status_code == 200 and len(resp.text) > 5000:
+                return resp.text
+        except Exception as e:
+            print(f"Aviso ScraperAPI ({url[:50]}...): {e}")
+
+    # Fallback directo con cabeceras de indexación
+    try:
+        resp = requests.get(url, headers=HEADERS, timeout=timeout)
+        if resp.status_code == 200:
+            return resp.text
+    except Exception as e:
+        print(f"Aviso descarga directa ({url[:50]}...): {e}")
+
+    return ""
+
 # ================= Schema para Gemini =================
 class EvaluacionAlquiler(BaseModel):
     titulo: str = Field(description="Título claro de la publicación")
@@ -59,8 +83,12 @@ def extraer_publicaciones_del_dia():
 
     for etiqueta, url_cat in URLS_BUSQUEDA:
         try:
-            resp = requests.get(url_cat, headers=HEADERS, timeout=15)
-            soup = BeautifulSoup(resp.text, "html.parser")
+            html = descargar_html(url_cat, timeout=30)
+            if not html:
+                print(f"[{etiqueta}] Sin respuesta HTML")
+                continue
+
+            soup = BeautifulSoup(html, "html.parser")
             enlaces = soup.find_all("a", href=re.compile(r"/MLU-\d+"))
             
             candidatas_categoria = 0
@@ -73,21 +101,19 @@ def extraer_publicaciones_del_dia():
                 publicaciones_candidatas.append(raw_url)
                 candidatas_categoria += 1
 
-            print(f"[{etiqueta}] Status: {resp.status_code} | Bytes: {len(resp.text)} | Encontradas: {candidatas_categoria}")
-            if len(enlaces) == 0 and len(resp.text) < 30000:
-                print(f"  Aviso: Respuesta reducida ({len(resp.text)} bytes). Título: {soup.title.string if soup.title else 'Sin título'}")
+            print(f"[{etiqueta}] Bytes: {len(html)} | Encontradas hoy: {candidatas_categoria}")
 
         except Exception as e:
-            print(f"Error escaneando {etiqueta} ({url_cat}): {e}")
+            print(f"Error escaneando {etiqueta}: {e}")
 
     return publicaciones_candidatas, total_evaluadas
 
 def obtener_detalle_publicacion(url: str) -> str:
     try:
-        resp = requests.get(url, headers=HEADERS, timeout=15)
-        if resp.status_code != 200:
+        html = descargar_html(url, timeout=20)
+        if not html:
             return ""
-        soup = BeautifulSoup(resp.text, "html.parser")
+        soup = BeautifulSoup(html, "html.parser")
         
         titulo = soup.select_one("h1.ui-pdp-title, h1")
         precio = soup.select_one("div.ui-pdp-price__second-line, span.andes-money-amount__fraction, .ui-pdp-price")
