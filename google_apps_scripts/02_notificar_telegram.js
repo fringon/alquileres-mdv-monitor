@@ -6,7 +6,7 @@
 // a tu grupo/chat de Telegram.
 //
 // Despliegue:
-// 1. Configurar un Activador (reloj en el menú izquierdo de Apps Script).
+// 1. Configurar un Activador (icono de reloj en el menú izquierdo de Apps Script).
 // 2. Función: enviarNotificacionTelegram.
 // 3. Basado en tiempo > Temporizador por día (ej. 22:00 a 23:00).
 // ====================================================================
@@ -85,6 +85,7 @@ function extraerDatosDeDoc(docId) {
   const body = doc.getBody();
   const fullText = body.getText();
   
+  // Extraer exclusivamente los dígitos numéricos de la línea
   let totalEvaluadas = "0";
   const lineas = fullText.split("\n");
   for (let i = 0; i < lineas.length; i++) {
@@ -100,38 +101,35 @@ function extraerDatosDeDoc(docId) {
 
   let items = [];
   
-  // 1. Extraer formato Link: URL si existiera
-  const linkRegex = /Link:\s*(https?:\/\/[^\s]+mercadolibre[^\s]*)/g;
-  const titleRegex = /(\d+)\.\s*(.+)/g;
-  
-  const paragraphs = fullText.split("\n");
-  let currentTitle = "";
-  for (let i = 0; i < paragraphs.length; i++) {
-    const p = paragraphs[i].trim();
-    let mTitle = p.match(/^(\d+)\.\s*(.+)/);
-    if (mTitle) {
-      currentTitle = mTitle[2].trim();
-    }
-    let mLink = p.match(/Link:\s*(https?:\/\/[^\s]+mercadolibre[^\s]*)/i);
-    if (mLink) {
-      let url = mLink[1].trim();
-      if (url && !items.some(it => it.url === url)) {
-        items.push({ titulo: currentTitle || "Ver publicación en Mercado Libre", url: url });
-      }
+  // 1. Extraer formato Markdown [Título](URL)
+  const mdRegex = /\[(.*?)\]\((https?:\/\/[^\)\s]+mercadolibre[^\)\s]*)\)/g;
+  let m;
+  while ((m = mdRegex.exec(fullText)) !== null) {
+    const rawTitle = String(m[1] || "");
+    const rawUrl = String(m[2] || "");
+    const titulo = rawTitle.replace(/^(\d+[\.\)]\s*|#+\s*)/, '').trim();
+    const url = rawUrl.trim();
+    if (url && !items.some(it => it.url === url)) {
+      items.push({ titulo: titulo || "Ver publicación en Mercado Libre", url: url });
     }
   }
 
-  // 2. Extraer formato Markdown [Título](URL) si existiera
+  // 2. Extraer formato "• Link: https://..." si no se usó Markdown
   if (items.length === 0) {
-    const mdRegex = /\[(.*?)\]\((https?:\/\/[^\)\s]+mercadolibre[^\)\s]*)\)/g;
-    let m;
-    while ((m = mdRegex.exec(fullText)) !== null) {
-      const rawTitle = String(m[1] || "");
-      const rawUrl = String(m[2] || "");
-      const titulo = rawTitle.replace(/^(\d+[\.\)]\s*|#+\s*)/, '').trim();
-      const url = rawUrl.trim();
-      if (url && !items.some(it => it.url === url)) {
-        items.push({ titulo: titulo || "Ver publicación en Mercado Libre", url: url });
+    const paragraphs = fullText.split("\n");
+    let currentTitle = "";
+    for (let i = 0; i < paragraphs.length; i++) {
+      const p = paragraphs[i].trim();
+      let mTitle = p.match(/^(\d+)\.\s*(.+)/);
+      if (mTitle) {
+        currentTitle = mTitle[2].trim();
+      }
+      let mLink = p.match(/Link:\s*(https?:\/\/[^\s]+mercadolibre[^\s]*)/i);
+      if (mLink) {
+        let url = mLink[1].trim();
+        if (url && !items.some(it => it.url === url)) {
+          items.push({ titulo: currentTitle || "Ver publicación en Mercado Libre", url: url });
+        }
       }
     }
   }

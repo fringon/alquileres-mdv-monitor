@@ -221,8 +221,8 @@ def subir_reporte_drive(total_evaluadas: int, propiedades: List[dict]):
         m2 = prop.get('metros_cuadrados')
         m2_str = f"{m2} m²" if m2 else "N/A"
 
-        texto_reporte += f"{idx}. {prop.get('titulo', 'Sin título')}\n"
-        texto_reporte += f"• Link: {prop.get('url', '')}\n"
+        titulo_limpio = prop.get('titulo', 'Propiedad en alquiler').replace('[', '').replace(']', '')
+        texto_reporte += f"{idx}. [{titulo_limpio}]({prop.get('url', '')})\n"
         texto_reporte += f"• Ubicación: {prop.get('barrio', '')}\n"
         texto_reporte += f"• Precio base: ${prop.get('precio_base_uyu', 0):,.0f} UYU\n"
         texto_reporte += f"• Gastos comunes: {gc_str}\n"
