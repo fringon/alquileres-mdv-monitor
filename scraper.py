@@ -129,8 +129,8 @@ def evaluar_con_gemini(textos_avisos: List[str]) -> List[dict]:
     gemini_url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-3.6-flash:generateContent?key={api_key}"
     cumplen = []
     
-    # Procesar en lotes de 10 avisos
-    batch_size = 10
+    # Procesar en lotes de 5 avisos para máxima precisión
+    batch_size = 5
     for i in range(0, len(textos_avisos), batch_size):
         batch = textos_avisos[i : i + batch_size]
         print(f"Evaluando lote de {len(batch)} propiedades con Gemini...")
