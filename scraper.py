@@ -14,19 +14,23 @@ from googleapiclient.discovery import build
 DRIVE_FOLDER_ID = "1Hvr7ARrIa9UL72jJqnhutkt3d1x8r9nT"
 
 URLS_BUSQUEDA = [
-    # Malvín (Casas y Aptos hasta 40.000 UYU)
-    "https://inmuebles.mercadolibre.com.uy/apartamentos/alquiler/montevideo/malvin/_PriceRange_0UYU-40000UYU",
-    "https://inmuebles.mercadolibre.com.uy/casas/alquiler/montevideo/malvin/_PriceRange_0UYU-40000UYU",
+    # Malvín (Casas y Aptos hasta 40.000 UYU publicados hoy)
+    "https://inmuebles.mercadolibre.com.uy/apartamentos/alquiler/montevideo/malvin/_PriceRange_0UYU-40000UYU_PublishedToday_YES",
+    "https://inmuebles.mercadolibre.com.uy/casas/alquiler/montevideo/malvin/_PriceRange_0UYU-40000UYU_PublishedToday_YES",
     # Punta Gorda
-    "https://inmuebles.mercadolibre.com.uy/apartamentos/alquiler/montevideo/punta-gorda/_PriceRange_0UYU-40000UYU",
-    "https://inmuebles.mercadolibre.com.uy/casas/alquiler/montevideo/punta-gorda/_PriceRange_0UYU-40000UYU",
+    "https://inmuebles.mercadolibre.com.uy/apartamentos/alquiler/montevideo/punta-gorda/_PriceRange_0UYU-40000UYU_PublishedToday_YES",
+    "https://inmuebles.mercadolibre.com.uy/casas/alquiler/montevideo/punta-gorda/_PriceRange_0UYU-40000UYU_PublishedToday_YES",
     # Carrasco
+    "https://inmuebles.mercadolibre.com.uy/apartamentos/alquiler/montevideo/carrasco/_PriceRange_0UYU-40000UYU_PublishedToday_YES",
+    "https://inmuebles.mercadolibre.com.uy/casas/alquiler/montevideo/carrasco/_PriceRange_0UYU-40000UYU_PublishedToday_YES",
+    # Categorías generales como respaldo
+    "https://inmuebles.mercadolibre.com.uy/apartamentos/alquiler/montevideo/malvin/_PriceRange_0UYU-40000UYU",
+    "https://inmuebles.mercadolibre.com.uy/apartamentos/alquiler/montevideo/punta-gorda/_PriceRange_0UYU-40000UYU",
     "https://inmuebles.mercadolibre.com.uy/apartamentos/alquiler/montevideo/carrasco/_PriceRange_0UYU-40000UYU",
-    "https://inmuebles.mercadolibre.com.uy/casas/alquiler/montevideo/carrasco/_PriceRange_0UYU-40000UYU",
 ]
 
 HEADERS = {
-    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+    "User-Agent": "Mozilla/5.0 (compatible; Googlebot/2.1; +http://www.google.com/bot.html)",
     "Accept-Language": "es-UY,es;q=0.9",
 }
 
@@ -61,11 +65,13 @@ def extraer_publicaciones_del_dia():
                 continue
 
             soup = BeautifulSoup(resp.text, "html.parser")
-            items = soup.select("li.ui-search-layout__item, div.ui-search-result__wrapper")
+            items = soup.select("li.ui-search-layout__item, div.ui-search-result__wrapper, div.poly-card, div.poly-card__content")
+
+            es_url_hoy = "_PublishedToday_YES" in url_cat
 
             for item in items:
                 total_evaluadas += 1
-                link_tag = item.select_one("a.ui-search-link, a.poly-component__title")
+                link_tag = item.select_one("a.poly-component__title, a.ui-search-link, a[href*='MLU-']")
                 if not link_tag or not link_tag.get("href"):
                     continue
 
@@ -73,9 +79,8 @@ def extraer_publicaciones_del_dia():
                 if not re.search(r"/MLU-\d+", raw_url) or raw_url in urls_vistas:
                     continue
 
-                # Validar etiqueta temporal estricta en el listado
                 item_text = item.get_text(" ", strip=True).lower()
-                es_de_hoy = "publicado hoy" in item_text or "hace " in item_text and ("hora" in item_text or "minuto" in item_text)
+                es_de_hoy = es_url_hoy or ("publicado hoy" in item_text or "hace " in item_text and ("hora" in item_text or "minuto" in item_text))
 
                 if es_de_hoy:
                     urls_vistas.add(raw_url)
@@ -94,10 +99,10 @@ def obtener_detalle_publicacion(url: str) -> str:
         soup = BeautifulSoup(resp.text, "html.parser")
         
         # Extraer bloques relevantes de texto
-        titulo = soup.select_one("h1.ui-pdp-title")
-        precio = soup.select_one("div.ui-pdp-price__second-line, span.andes-money-amount__fraction")
-        caracteristicas = soup.select("div.ui-pdp-attributes, table.andes-table")
-        descripcion = soup.select_one("div.ui-pdp-description__content, p.ui-pdp-description__content")
+        titulo = soup.select_one("h1.ui-pdp-title, h1")
+        precio = soup.select_one("div.ui-pdp-price__second-line, span.andes-money-amount__fraction, .ui-pdp-price")
+        caracteristicas = soup.select("div.ui-pdp-attributes, table.andes-table, .ui-pdp-specs__table, .ui-pdp-features")
+        descripcion = soup.select_one("div.ui-pdp-description__content, p.ui-pdp-description__content, .ui-pdp-description")
 
         texto_completo = f"URL: {url}\n"
         if titulo: texto_completo += f"Título: {titulo.get_text(strip=True)}\n"
@@ -117,33 +122,44 @@ def evaluar_con_gemini(textos_avisos: List[str]) -> List[EvaluacionAlquiler]:
         return []
 
     client = genai.Client(api_key=os.environ.get("GEMINI_API_KEY"))
-    prompt = f"""
-    Eres un auditor inmobiliario estricto para Montevideo (Malvín, Punta Gorda, Carrasco).
-    Evalúa las siguientes publicaciones de alquiler con estos requisitos ESTRICTOS:
-    - Alquiler mensual residencial.
-    - Costo total (Precio base + Gastos Comunes + Cochera) <= $40.000 UYU mensuales.
-    - Mínimo 1 dormitorio (priorizar 2 dormitorios).
-    - Mínimo 50 m² (si no se especifica pero describe casa/apto amplio, indícalo en observaciones).
-    - Espacio exterior OBLIGATORIO: terraza, patio, balcón amplio o jardín.
-    - Cochera / Garaje OBLIGATORIO (incluido o dentro del tope de $40.000 UYU).
+    cumplen = []
+    
+    # Procesar en lotes de 15 avisos para asegurar máxima precisión y evitar timeouts
+    batch_size = 15
+    for i in range(0, len(textos_avisos), batch_size):
+        batch = textos_avisos[i : i + batch_size]
+        prompt = f"""
+        Eres un auditor inmobiliario estricto para Montevideo (Malvín, Punta Gorda, Carrasco).
+        Evalúa las siguientes publicaciones de alquiler con estos requisitos ESTRICTOS:
+        - Alquiler mensual residencial.
+        - Costo total (Precio base + Gastos Comunes + Cochera) <= $40.000 UYU mensuales.
+        - Mínimo 1 dormitorio (priorizar 2 dormitorios).
+        - Mínimo 50 m² (si no se especifica pero describe casa/apto amplio, indícalo en observaciones).
+        - Espacio exterior OBLIGATORIO: terraza, patio, balcón amplio o jardín.
+        - Cochera / Garaje OBLIGATORIO (incluido o dentro del tope de $40.000 UYU).
 
-    Analiza cada aviso y genera la evaluación estructurada.
-    Avisos para analizar:
-    {json.dumps(textos_avisos, ensure_ascii=False)}
-    """
+        Analiza cada aviso y genera la evaluación estructurada.
+        Avisos para analizar:
+        {json.dumps(batch, ensure_ascii=False)}
+        """
 
-    response = client.models.generate_content(
-        model="gemini-2.0-flash",
-        contents=prompt,
-        config={
-            "response_mime_type": "application/json",
-            "response_schema": list[EvaluacionAlquiler],
-        },
-    )
+        try:
+            response = client.models.generate_content(
+                model="gemini-2.0-flash",
+                contents=prompt,
+                config={
+                    "response_mime_type": "application/json",
+                    "response_schema": list[EvaluacionAlquiler],
+                },
+            )
+            data = json.loads(response.text)
+            for item in data:
+                ev = EvaluacionAlquiler(**item) if isinstance(item, dict) else item
+                if ev.cumple_estricto:
+                    cumplen.append(ev)
+        except Exception as e:
+            print(f"Error evaluando lote con Gemini: {e}")
 
-    resultados: List[EvaluacionAlquiler] = json.loads(response.text)
-    # Filtrar solo las que cumplen estrictamente y ordenar por prioridad
-    cumplen = [r for r in resultados if r.cumple_estricto]
     cumplen.sort(key=lambda x: x.prioridad_score, reverse=True)
     return cumplen
 
