@@ -1,6 +1,7 @@
 import os
 import json
 import re
+import time
 import urllib.parse
 from datetime import datetime
 from typing import List, Optional
@@ -13,11 +14,20 @@ from googleapiclient.http import MediaIoBaseUpload
 
 # ================= Cargar variables locales =================
 if os.path.exists(".env"):
-    with open(".env", "r", encoding="utf-8") as f:
-        for line in f:
-            if "=" in line and not line.strip().startswith("#"):
-                k, v = line.strip().split("=", 1)
-                os.environ[k.strip()] = v.strip()
+    try:
+        with open(".env", "r", encoding="utf-8") as f:
+            for line in f:
+                line = line.strip()
+                if "=" in line and not line.startswith("#"):
+                    k, v = line.split("=", 1)
+                    k = k.strip()
+                    v = v.strip()
+                    # Quitar comillas exteriores si las tiene
+                    if (v.startswith('"') and v.endswith('"')) or (v.startswith("'") and v.endswith("'")):
+                        v = v[1:-1]
+                    os.environ[k] = v
+    except Exception as e:
+        print(f"Aviso cargando .env: {e}")
 
 # ================= Configuración =================
 DRIVE_FOLDER_ID = "1Hvr7ARrIa9UL72jJqnhutkt3d1x8r9nT"
@@ -106,7 +116,7 @@ def obtener_detalle_publicacion(url: str) -> str:
     except Exception:
         return ""
 
-# ================= 2. Evaluador Gemini (REST API Puro) =================
+# ================= 2. Evaluador Gemini (REST API con Reintentos) =================
 def evaluar_con_gemini(textos_avisos: List[str]) -> List[dict]:
     if not textos_avisos:
         return []
@@ -165,19 +175,27 @@ def evaluar_con_gemini(textos_avisos: List[str]) -> List[dict]:
             }
         }
 
-        try:
-            resp = requests.post(gemini_url, json=payload, timeout=40)
-            if resp.status_code == 200:
-                data = resp.json()
-                texto_json = data["candidates"][0]["content"]["parts"][0]["text"]
-                items = json.loads(texto_json)
-                for item in items:
-                    if item.get("cumple_estricto"):
-                        cumplen.append(item)
-            else:
-                print(f"Error en llamada a Gemini API ({resp.status_code}): {resp.text}")
-        except Exception as e:
-            print(f"Error evaluando lote con Gemini: {e}")
+        # Intentar hasta 3 veces con retroceso si hay alta demanda (503/429)
+        for intento in range(3):
+            try:
+                resp = requests.post(gemini_url, json=payload, timeout=40)
+                if resp.status_code == 200:
+                    data = resp.json()
+                    texto_json = data["candidates"][0]["content"]["parts"][0]["text"]
+                    items = json.loads(texto_json)
+                    for item in items:
+                        if item.get("cumple_estricto"):
+                            cumplen.append(item)
+                    break
+                elif resp.status_code in [503, 429]:
+                    print(f"Gemini temporalmente ocupado (intento {intento+1}/3), reintentando en 3s...")
+                    time.sleep(3)
+                else:
+                    print(f"Error en llamada a Gemini API ({resp.status_code}): {resp.text}")
+                    break
+            except Exception as e:
+                print(f"Error evaluando lote con Gemini (intento {intento+1}/3): {e}")
+                time.sleep(2)
 
     cumplen.sort(key=lambda x: x.get("prioridad_score", 0), reverse=True)
     return cumplen
@@ -188,12 +206,31 @@ def subir_reporte_drive(total_evaluadas: int, propiedades: List[dict]):
         print("No se encontraron propiedades que cumplan todos los requisitos hoy. No se crea archivo.")
         return
 
-    sa_raw = os.environ.get("GCP_SA_KEY")
-    if not sa_raw:
-        print("ERROR: No se encontró GCP_SA_KEY en las variables de entorno.")
-        return
+    sa_info = None
+    if os.path.exists("credentials.json"):
+        try:
+            with open("credentials.json", "r", encoding="utf-8") as f:
+                sa_info = json.load(f)
+        except Exception as e:
+            print(f"Aviso leyendo credentials.json: {e}")
 
-    sa_info = json.loads(sa_raw)
+    if not sa_info:
+        sa_raw = os.environ.get("GCP_SA_KEY", "").strip()
+        if not sa_raw:
+            print("ERROR: No se encontró GCP_SA_KEY ni archivo credentials.json.")
+            return
+        
+        # Limpiar comillas exteriores si las hubiera
+        if (sa_raw.startswith("'") and sa_raw.endswith("'")) or (sa_raw.startswith('"') and sa_raw.endswith('"')):
+            sa_raw = sa_raw[1:-1]
+
+        try:
+            sa_info = json.loads(sa_raw)
+        except Exception as e:
+            print(f"ERROR: No se pudo decodificar el JSON de GCP_SA_KEY: {e}")
+            print("Asegúrate de que GCP_SA_KEY sea un JSON válido o copia tu archivo como 'credentials.json'")
+            return
+
     creds = service_account.Credentials.from_service_account_info(
         sa_info, scopes=["https://www.googleapis.com/auth/drive"]
     )
