@@ -133,7 +133,7 @@ def evaluar_con_gemini(textos_avisos: List[str]) -> List[EvaluacionAlquiler]:
     """
 
     response = client.models.generate_content(
-        model="gemini-2.5-flash",
+        model="gemini-2.0-flash",
         contents=prompt,
         config={
             "response_mime_type": "application/json",
