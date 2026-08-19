@@ -220,7 +220,6 @@ def subir_reporte_drive(total_evaluadas: int, propiedades: List[dict]):
             print("ERROR: No se encontró GCP_SA_KEY ni archivo credentials.json.")
             return
         
-        # Limpiar comillas exteriores si las hubiera
         if (sa_raw.startswith("'") and sa_raw.endswith("'")) or (sa_raw.startswith('"') and sa_raw.endswith('"')):
             sa_raw = sa_raw[1:-1]
 
@@ -228,26 +227,24 @@ def subir_reporte_drive(total_evaluadas: int, propiedades: List[dict]):
             sa_info = json.loads(sa_raw)
         except Exception as e:
             print(f"ERROR: No se pudo decodificar el JSON de GCP_SA_KEY: {e}")
-            print("Asegúrate de que GCP_SA_KEY sea un JSON válido o copia tu archivo como 'credentials.json'")
             return
 
     creds = service_account.Credentials.from_service_account_info(
-        sa_info, scopes=["https://www.googleapis.com/auth/drive"]
+        sa_info, scopes=[
+            "https://www.googleapis.com/auth/drive",
+            "https://www.googleapis.com/auth/documents"
+        ]
     )
     drive_service = build("drive", "v3", credentials=creds)
 
     fecha_hoy = datetime.now().strftime("%d/%m/%Y")
     nombre_archivo = f"Reporte Alquileres - {fecha_hoy}"
 
-    html_content = f"""
-    <html>
-    <head><style>body{{font-family: Arial, sans-serif; line-height: 1.6;}} h1{{color: #1a73e8;}} h2{{color: #202124; border-bottom: 1px solid #dadce0; padding-bottom: 4px;}}</style></head>
-    <body>
-        <h1>Reporte Diario de Alquileres - {fecha_hoy}</h1>
-        <p><strong>* Total de publicaciones evaluadas hoy:</strong> {total_evaluadas} publicaciones</p>
-        <p><strong>* Propiedades calificadas:</strong> {len(propiedades)}</p>
-        <hr/>
-    """
+    # Construir texto limpio del reporte
+    texto_reporte = f"Reporte Diario de Alquileres - {fecha_hoy}\n"
+    texto_reporte += f"* Total de publicaciones evaluadas hoy: {total_evaluadas} publicaciones\n"
+    texto_reporte += f"* Propiedades calificadas: {len(propiedades)}\n"
+    texto_reporte += "=" * 50 + "\n\n"
 
     for idx, prop in enumerate(propiedades, 1):
         gc = prop.get('gastos_comunes_uyu')
@@ -255,31 +252,61 @@ def subir_reporte_drive(total_evaluadas: int, propiedades: List[dict]):
         m2 = prop.get('metros_cuadrados')
         m2_str = f"{m2} m²" if m2 else "N/A"
 
-        html_content += f"""
-        <h2>{idx}. <a href="{prop.get('url', '#')}" target="_blank">{prop.get('titulo', 'Sin título')}</a></h2>
-        <ul>
-            <li><strong>Ubicación:</strong> {prop.get('barrio', '')}</li>
-            <li><strong>Precio base:</strong> ${prop.get('precio_base_uyu', 0):,.0f} UYU</li>
-            <li><strong>Gastos comunes:</strong> {gc_str}</li>
-            <li><strong>Costo total estimado:</strong> ${prop.get('costo_total_estimado', 0):,.0f} UYU</li>
-            <li><strong>Características:</strong> {prop.get('dormitorios', 1)} dorm | {m2_str} | Exterior: {prop.get('detalle_espacio_exterior', '')} | Cochera: {prop.get('detalle_cochera', '')}</li>
-            <li><strong>Justificación:</strong> {prop.get('justificacion_calificacion', '')}</li>
-        </ul>
+        texto_reporte += f"{idx}. {prop.get('titulo', 'Sin título')}\n"
+        texto_reporte += f"• Link: {prop.get('url', '')}\n"
+        texto_reporte += f"• Ubicación: {prop.get('barrio', '')}\n"
+        texto_reporte += f"• Precio base: ${prop.get('precio_base_uyu', 0):,.0f} UYU\n"
+        texto_reporte += f"• Gastos comunes: {gc_str}\n"
+        texto_reporte += f"• Costo total estimado: ${prop.get('costo_total_estimado', 0):,.0f} UYU\n"
+        texto_reporte += f"• Características: {prop.get('dormitorios', 1)} dorm | {m2_str} | Exterior: {prop.get('detalle_espacio_exterior', '')} | Cochera: {prop.get('detalle_cochera', '')}\n"
+        texto_reporte += f"• Justificación: {prop.get('justificacion_calificacion', '')}\n\n"
+
+    # Creación nativa con Google Docs API (evita el límite de cuota de almacenamiento de Service Accounts)
+    try:
+        docs_service = build("docs", "v1", credentials=creds)
+        doc = docs_service.documents().create(body={"title": nombre_archivo}).execute()
+        doc_id = doc.get("documentId")
+
+        # Mover el archivo a la carpeta "Paulina"
+        drive_service.files().update(
+            fileId=doc_id,
+            addParents=DRIVE_FOLDER_ID,
+            fields="id, parents"
+        ).execute()
+
+        # Insertar el texto formateado
+        docs_service.documents().batchUpdate(
+            documentId=doc_id,
+            body={"requests": [{"insertText": {"location": {"index": 1}, "text": texto_reporte}}]}
+        ).execute()
+
+        print(f"Reporte creado exitosamente en Google Drive: {nombre_archivo} (ID: {doc_id})")
+        return
+    except Exception as e:
+        print(f"Aviso Google Docs API: {e}. Intentando método alternativo...")
+
+    # Alternativa en caso de que Google Docs API no esté habilitada
+    try:
+        html_content = f"""
+        <html><body>
+            <h1>Reporte Diario de Alquileres - {fecha_hoy}</h1>
+            <p><strong>Total evaluadas hoy:</strong> {total_evaluadas}</p>
+            <p><strong>Propiedades calificadas:</strong> {len(propiedades)}</p>
+            <pre>{texto_reporte}</pre>
+        </body></html>
         """
-
-    html_content += "</body></html>"
-
-    media = MediaIoBaseUpload(BytesIO(html_content.encode("utf-8")), mimetype="text/html", resumable=True)
-    file_metadata = {
-        "name": nombre_archivo,
-        "mimeType": "application/vnd.google-apps.document",
-        "parents": [DRIVE_FOLDER_ID],
-    }
-
-    archivo_creado = drive_service.files().create(
-        body=file_metadata, media_body=media, fields="id, name"
-    ).execute()
-    print(f"Reporte creado exitosamente en Google Drive: {archivo_creado.get('name')} (ID: {archivo_creado.get('id')})")
+        media = MediaIoBaseUpload(BytesIO(html_content.encode("utf-8")), mimetype="text/html", resumable=False)
+        file_metadata = {
+            "name": nombre_archivo,
+            "mimeType": "application/vnd.google-apps.document",
+            "parents": [DRIVE_FOLDER_ID],
+        }
+        archivo_creado = drive_service.files().create(
+            body=file_metadata, media_body=media, fields="id, name", supportsAllDrives=True
+        ).execute()
+        print(f"Reporte creado exitosamente en Google Drive: {archivo_creado.get('name')} (ID: {archivo_creado.get('id')})")
+    except Exception as e:
+        print(f"ERROR subiendo archivo a Google Drive: {e}")
 
 # ================= Ejecución Principal =================
 if __name__ == "__main__":
