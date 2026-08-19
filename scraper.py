@@ -9,28 +9,31 @@ from pydantic import BaseModel, Field
 from google import genai
 from google.oauth2 import service_account
 from googleapiclient.discovery import build
+from io import BytesIO
+from googleapiclient.http import MediaIoBaseUpload
 
 # ================= Configuración =================
 DRIVE_FOLDER_ID = "1Hvr7ARrIa9UL72jJqnhutkt3d1x8r9nT"
 
 URLS_BUSQUEDA = [
-    # Malvín (Casas y Aptos hasta 40.000 UYU publicados hoy)
-    "https://inmuebles.mercadolibre.com.uy/apartamentos/alquiler/montevideo/malvin/_PriceRange_0UYU-40000UYU_PublishedToday_YES",
-    "https://inmuebles.mercadolibre.com.uy/casas/alquiler/montevideo/malvin/_PriceRange_0UYU-40000UYU_PublishedToday_YES",
+    # Malvín
+    "https://listado.mercadolibre.com.uy/inmuebles/apartamentos/alquiler/montevideo/malvin/_PriceRange_0UYU-40000UYU_PublishedToday_YES",
+    "https://listado.mercadolibre.com.uy/inmuebles/apartamentos/alquiler/montevideo/malvin/_PriceRange_0UYU-40000UYU",
+    "https://listado.mercadolibre.com.uy/inmuebles/casas/alquiler/montevideo/malvin/_PriceRange_0UYU-40000UYU_PublishedToday_YES",
+    "https://listado.mercadolibre.com.uy/inmuebles/casas/alquiler/montevideo/malvin/_PriceRange_0UYU-40000UYU",
     # Punta Gorda
-    "https://inmuebles.mercadolibre.com.uy/apartamentos/alquiler/montevideo/punta-gorda/_PriceRange_0UYU-40000UYU_PublishedToday_YES",
-    "https://inmuebles.mercadolibre.com.uy/casas/alquiler/montevideo/punta-gorda/_PriceRange_0UYU-40000UYU_PublishedToday_YES",
+    "https://listado.mercadolibre.com.uy/inmuebles/apartamentos/alquiler/montevideo/punta-gorda/_PriceRange_0UYU-40000UYU_PublishedToday_YES",
+    "https://listado.mercadolibre.com.uy/inmuebles/apartamentos/alquiler/montevideo/punta-gorda/_PriceRange_0UYU-40000UYU",
+    "https://listado.mercadolibre.com.uy/inmuebles/casas/alquiler/montevideo/punta-gorda/_PriceRange_0UYU-40000UYU",
     # Carrasco
-    "https://inmuebles.mercadolibre.com.uy/apartamentos/alquiler/montevideo/carrasco/_PriceRange_0UYU-40000UYU_PublishedToday_YES",
-    "https://inmuebles.mercadolibre.com.uy/casas/alquiler/montevideo/carrasco/_PriceRange_0UYU-40000UYU_PublishedToday_YES",
-    # Categorías generales como respaldo
-    "https://inmuebles.mercadolibre.com.uy/apartamentos/alquiler/montevideo/malvin/_PriceRange_0UYU-40000UYU",
-    "https://inmuebles.mercadolibre.com.uy/apartamentos/alquiler/montevideo/punta-gorda/_PriceRange_0UYU-40000UYU",
-    "https://inmuebles.mercadolibre.com.uy/apartamentos/alquiler/montevideo/carrasco/_PriceRange_0UYU-40000UYU",
+    "https://listado.mercadolibre.com.uy/inmuebles/apartamentos/alquiler/montevideo/carrasco/_PriceRange_0UYU-40000UYU_PublishedToday_YES",
+    "https://listado.mercadolibre.com.uy/inmuebles/apartamentos/alquiler/montevideo/carrasco/_PriceRange_0UYU-40000UYU",
+    "https://listado.mercadolibre.com.uy/inmuebles/casas/alquiler/montevideo/carrasco/_PriceRange_0UYU-40000UYU",
 ]
 
 HEADERS = {
     "User-Agent": "Mozilla/5.0 (compatible; Googlebot/2.1; +http://www.google.com/bot.html)",
+    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
     "Accept-Language": "es-UY,es;q=0.9",
 }
 
@@ -62,14 +65,14 @@ def extraer_publicaciones_del_dia():
         try:
             resp = requests.get(url_cat, headers=HEADERS, timeout=15)
             if resp.status_code != 200:
+                print(f"[HTTP {resp.status_code}] Saltando categoría: {url_cat}")
                 continue
 
             soup = BeautifulSoup(resp.text, "html.parser")
-            
-            # Selector universal: capturar enlaces a publicaciones MLU sin depender de clases CSS específicas
             enlaces = soup.find_all("a", href=re.compile(r"/MLU-\d+"))
             es_url_hoy = "_PublishedToday_YES" in url_cat
 
+            candidatas_categoria = 0
             for a_tag in enlaces:
                 raw_url = a_tag["href"].split("#")[0].split("?")[0]
                 if raw_url in urls_vistas:
@@ -77,7 +80,7 @@ def extraer_publicaciones_del_dia():
                 urls_vistas.add(raw_url)
                 total_evaluadas += 1
 
-                # Buscar el contenedor padre de la tarjeta para evaluar fecha/etiqueta
+                # Evaluar etiqueta de fecha en la tarjeta
                 padre = a_tag.find_parent(["li", "div", "article"])
                 texto_tarjeta = padre.get_text(" ", strip=True).lower() if padre else ""
 
@@ -89,6 +92,10 @@ def extraer_publicaciones_del_dia():
 
                 if es_de_hoy and raw_url not in publicaciones_candidatas:
                     publicaciones_candidatas.append(raw_url)
+                    candidatas_categoria += 1
+
+            nombre_cat = url_cat.split("inmuebles/")[-1].split("/_")[0]
+            print(f"Categoría: {nombre_cat} | Enlaces encontrados: {len(enlaces)} | De hoy: {candidatas_categoria}")
 
         except Exception as e:
             print(f"Error escaneando categoría {url_cat}: {e}")
@@ -102,10 +109,9 @@ def obtener_detalle_publicacion(url: str) -> str:
             return ""
         soup = BeautifulSoup(resp.text, "html.parser")
         
-        # Extraer bloques relevantes de texto
         titulo = soup.select_one("h1.ui-pdp-title, h1")
         precio = soup.select_one("div.ui-pdp-price__second-line, span.andes-money-amount__fraction, .ui-pdp-price")
-        caracteristicas = soup.select("div.ui-pdp-attributes, table.andes-table, .ui-pdp-specs__table, .ui-pdp-features")
+        caracteristicas = soup.select("div.ui-pdp-attributes, table.andes-table, div.ui-pdp-specs__table, .ui-pdp-features")
         descripcion = soup.select_one("div.ui-pdp-description__content, p.ui-pdp-description__content, .ui-pdp-description")
 
         texto_completo = f"URL: {url}\n"
@@ -128,10 +134,11 @@ def evaluar_con_gemini(textos_avisos: List[str]) -> List[EvaluacionAlquiler]:
     client = genai.Client(api_key=os.environ.get("GEMINI_API_KEY"))
     cumplen = []
     
-    # Procesar en lotes de 15 avisos para asegurar máxima precisión y evitar timeouts
+    # Procesar en lotes de 15 avisos
     batch_size = 15
     for i in range(0, len(textos_avisos), batch_size):
         batch = textos_avisos[i : i + batch_size]
+        print(f"Evaluando lote de {len(batch)} propiedades con Gemini 2.0...")
         prompt = f"""
         Eres un auditor inmobiliario estricto para Montevideo (Malvín, Punta Gorda, Carrasco).
         Evalúa las siguientes publicaciones de alquiler con estos requisitos ESTRICTOS:
@@ -143,7 +150,7 @@ def evaluar_con_gemini(textos_avisos: List[str]) -> List[EvaluacionAlquiler]:
         - Cochera / Garaje OBLIGATORIO (incluido o dentro del tope de $40.000 UYU).
 
         Analiza cada aviso y genera la evaluación estructurada.
-        Avisos para analizar:
+        Avisos:
         {json.dumps(batch, ensure_ascii=False)}
         """
 
@@ -182,10 +189,9 @@ def subir_reporte_drive(total_evaluadas: int, propiedades: List[EvaluacionAlquil
     fecha_hoy = datetime.now().strftime("%d/%m/%Y")
     nombre_archivo = f"Reporte Alquileres - {fecha_hoy}"
 
-    # Construir contenido HTML enriquecido
     html_content = f"""
     <html>
-    <head><style>body{{font-family: Arial, sans-serif; line-height: 1.6;}} h1{{color: #1a73e8;}} h2{{color: #202124; border-bottom: 1px solid #dadce0; padding-bottom: 4px;}} .badge{{background: #e8f0fe; color: #1a73e8; padding: 2px 8px; border-radius: 4px;}}</style></head>
+    <head><style>body{{font-family: Arial, sans-serif; line-height: 1.6;}} h1{{color: #1a73e8;}} h2{{color: #202124; border-bottom: 1px solid #dadce0; padding-bottom: 4px;}}</style></head>
     <body>
         <h1>Reporte Diario de Alquileres - {fecha_hoy}</h1>
         <p><strong>* Total de publicaciones evaluadas hoy:</strong> {total_evaluadas} publicaciones</p>
@@ -208,13 +214,10 @@ def subir_reporte_drive(total_evaluadas: int, propiedades: List[EvaluacionAlquil
 
     html_content += "</body></html>"
 
-    from io import BytesIO
-    from googleapiclient.http import MediaIoBaseUpload
-
     media = MediaIoBaseUpload(BytesIO(html_content.encode("utf-8")), mimetype="text/html", resumable=True)
     file_metadata = {
         "name": nombre_archivo,
-        "mimeType": "application/vnd.google-apps.document",  # Convierte directo a Google Doc nativo
+        "mimeType": "application/vnd.google-apps.document",
         "parents": [DRIVE_FOLDER_ID],
     }
 
@@ -227,6 +230,7 @@ def subir_reporte_drive(total_evaluadas: int, propiedades: List[EvaluacionAlquil
 if __name__ == "__main__":
     print("Iniciando rastreo de alquileres...")
     urls_hoy, total_evaluadas = extraer_publicaciones_del_dia()
+    print(f"\n--- RESUMEN DE RASTREO ---")
     print(f"Total publicaciones evaluadas: {total_evaluadas} | Publicadas hoy: {len(urls_hoy)}")
 
     detalles = []
