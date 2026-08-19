@@ -13,6 +13,14 @@ from googleapiclient.discovery import build
 from io import BytesIO
 from googleapiclient.http import MediaIoBaseUpload
 
+# ================= Cargar variables locales =================
+if os.path.exists(".env"):
+    with open(".env", "r", encoding="utf-8") as f:
+        for line in f:
+            if "=" in line and not line.strip().startswith("#"):
+                k, v = line.strip().split("=", 1)
+                os.environ[k.strip()] = v.strip()
+
 # ================= Configuración =================
 DRIVE_FOLDER_ID = "1Hvr7ARrIa9UL72jJqnhutkt3d1x8r9nT"
 
@@ -34,37 +42,14 @@ HEADERS = {
     "Accept-Language": "es-UY,es;q=0.9",
 }
 
-def descargar_html(url: str, timeout: int = 45) -> str:
-    """Descarga el HTML utilizando ScraperAPI con renderizado JS si está configurada, o petición directa."""
-    scraper_key = os.environ.get("SCRAPER_API_KEY")
-    
-    if scraper_key:
-        # Usar render=true y country_code=uy para resolver el desafío anti-bot (Muralla) de MercadoLibre
-        proxy_url = f"https://api.scraperapi.com?api_key={scraper_key}&url={urllib.parse.quote(url)}&render=true&country_code=uy"
-        try:
-            resp = requests.get(proxy_url, timeout=timeout)
-            if resp.status_code == 200 and ("MLU-" in resp.text or len(resp.text) > 40000):
-                return resp.text
-            
-            # Intento alternativo solo con render=true
-            proxy_url_alt = f"https://api.scraperapi.com?api_key={scraper_key}&url={urllib.parse.quote(url)}&render=true"
-            resp_alt = requests.get(proxy_url_alt, timeout=timeout)
-            if resp_alt.status_code == 200 and ("MLU-" in resp_alt.text or len(resp_alt.text) > 40000):
-                return resp_alt.text
-            
-            # Si devolvió página de verificación reducida, loguear aviso
-            print(f"Aviso ScraperAPI: Respuesta de {len(resp.text)} bytes sin listados (desafío activo).")
-        except Exception as e:
-            print(f"Aviso ScraperAPI ({url[:50]}...): {e}")
-
-    # Fallback directo con cabeceras de indexación
+def descargar_html(url: str, timeout: int = 15) -> str:
+    """Descarga directa y ultra-rápida con cabeceras de indexación."""
     try:
         resp = requests.get(url, headers=HEADERS, timeout=timeout)
         if resp.status_code == 200:
             return resp.text
     except Exception as e:
-        print(f"Aviso descarga directa ({url[:50]}...): {e}")
-
+        print(f"Error descargando {url[:50]}...: {e}")
     return ""
 
 # ================= Schema para Gemini =================
