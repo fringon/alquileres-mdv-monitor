@@ -128,8 +128,8 @@ def evaluar_con_gemini(textos_avisos: List[str]) -> List[dict]:
         print("ERROR: No se encontró GEMINI_API_KEY en las variables de entorno.")
         return []
 
-    # Lista de modelos de respaldo en orden de preferencia
-    modelos_disponibles = ["gemini-3.6-flash", "gemini-2.5-flash", "gemini-1.5-flash"]
+    # Modelos activos y 100% disponibles para tu clave
+    modelos_disponibles = ["gemini-3.5-flash", "gemini-3.5-flash-lite"]
     cumplen = []
     
     # Procesar en lotes de 5 avisos
