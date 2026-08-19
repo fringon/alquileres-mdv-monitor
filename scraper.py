@@ -6,8 +6,6 @@ from datetime import datetime
 from typing import List, Optional
 import requests
 from bs4 import BeautifulSoup
-from pydantic import BaseModel, Field
-from google import genai
 from google.oauth2 import service_account
 from googleapiclient.discovery import build
 from io import BytesIO
@@ -43,7 +41,7 @@ HEADERS = {
 }
 
 def descargar_html(url: str, timeout: int = 15) -> str:
-    """Descarga directa y ultra-rápida con cabeceras de indexación."""
+    """Descarga directa y rápida con cabeceras de indexación."""
     try:
         resp = requests.get(url, headers=HEADERS, timeout=timeout)
         if resp.status_code == 200:
@@ -51,24 +49,6 @@ def descargar_html(url: str, timeout: int = 15) -> str:
     except Exception as e:
         print(f"Error descargando {url[:50]}...: {e}")
     return ""
-
-# ================= Schema para Gemini =================
-class EvaluacionAlquiler(BaseModel):
-    titulo: str = Field(description="Título claro de la publicación")
-    url: str = Field(description="URL exacta del aviso")
-    barrio: str = Field(description="Barrio: Malvín, Punta Gorda o Carrasco")
-    precio_base_uyu: float = Field(description="Precio base publicado en pesos uruguayos")
-    gastos_comunes_uyu: Optional[float] = Field(description="Gastos comunes aproximados en pesos uruguayos (0 si no aplica o incluidos, None si no se indica)")
-    costo_total_estimado: float = Field(description="Suma estimada de alquiler + gastos comunes")
-    dormitorios: int = Field(description="Cantidad de dormitorios")
-    metros_cuadrados: Optional[float] = Field(description="Metraje total o construido en m2")
-    tiene_espacio_exterior: bool = Field(description="True si tiene patio, terraza, balcón amplio o jardín")
-    detalle_espacio_exterior: str = Field(description="Detalle del espacio exterior encontrado")
-    tiene_cochera: bool = Field(description="True si tiene garaje o cochera incluida/disponible")
-    detalle_cochera: str = Field(description="Detalle de cochera/garaje")
-    cumple_estricto: bool = Field(description="True SOLO si costo_total <= 40000, m2 >= 50 (o razonable si no aclara), tiene espacio exterior, cochera y >= 1 dorm")
-    justificacion_calificacion: str = Field(description="Explicación detallada de por qué cumple o qué puntos no aclara")
-    prioridad_score: int = Field(description="Puntuación 1-100: mayor puntaje a 2 dorm, garaje incluido, terraza amplia y mejor precio")
 
 # ================= 1. Extractor Determinista =================
 def extraer_publicaciones_del_dia():
@@ -78,9 +58,8 @@ def extraer_publicaciones_del_dia():
 
     for etiqueta, url_cat in URLS_BUSQUEDA:
         try:
-            html = descargar_html(url_cat, timeout=30)
+            html = descargar_html(url_cat, timeout=15)
             if not html:
-                print(f"[{etiqueta}] Sin respuesta HTML")
                 continue
 
             soup = BeautifulSoup(html, "html.parser")
@@ -96,7 +75,7 @@ def extraer_publicaciones_del_dia():
                 publicaciones_candidatas.append(raw_url)
                 candidatas_categoria += 1
 
-            print(f"[{etiqueta}] Bytes: {len(html)} | Encontradas hoy: {candidatas_categoria}")
+            print(f"[{etiqueta}] Encontradas hoy: {candidatas_categoria}")
 
         except Exception as e:
             print(f"Error escaneando {etiqueta}: {e}")
@@ -105,7 +84,7 @@ def extraer_publicaciones_del_dia():
 
 def obtener_detalle_publicacion(url: str) -> str:
     try:
-        html = descargar_html(url, timeout=20)
+        html = descargar_html(url, timeout=15)
         if not html:
             return ""
         soup = BeautifulSoup(html, "html.parser")
@@ -127,12 +106,17 @@ def obtener_detalle_publicacion(url: str) -> str:
     except Exception:
         return ""
 
-# ================= 2. Evaluador Gemini =================
-def evaluar_con_gemini(textos_avisos: List[str]) -> List[EvaluacionAlquiler]:
+# ================= 2. Evaluador Gemini (REST API Puro) =================
+def evaluar_con_gemini(textos_avisos: List[str]) -> List[dict]:
     if not textos_avisos:
         return []
 
-    client = genai.Client(api_key=os.environ.get("GEMINI_API_KEY"))
+    api_key = os.environ.get("GEMINI_API_KEY")
+    if not api_key:
+        print("ERROR: No se encontró GEMINI_API_KEY en las variables de entorno.")
+        return []
+
+    gemini_url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key={api_key}"
     cumplen = []
     
     # Procesar en lotes de 10 avisos
@@ -150,38 +134,66 @@ def evaluar_con_gemini(textos_avisos: List[str]) -> List[EvaluacionAlquiler]:
         - Espacio exterior OBLIGATORIO: terraza, patio, balcón amplio o jardín.
         - Cochera / Garaje OBLIGATORIO (incluido o dentro del tope de $40.000 UYU).
 
-        Analiza cada aviso y genera la evaluación estructurada.
-        Avisos:
+        Devuelve ÚNICAMENTE un array JSON válido con la evaluación de cada aviso.
+        Formato de cada objeto en el array JSON:
+        {{
+            "titulo": "Título de la publicación",
+            "url": "URL exacta del aviso",
+            "barrio": "Malvín, Punta Gorda o Carrasco",
+            "precio_base_uyu": 35000,
+            "gastos_comunes_uyu": 3000,
+            "costo_total_estimado": 38000,
+            "dormitorios": 2,
+            "metros_cuadrados": 55,
+            "tiene_espacio_exterior": true,
+            "detalle_espacio_exterior": "Terraza al frente",
+            "tiene_cochera": true,
+            "detalle_cochera": "Cochera incluida",
+            "cumple_estricto": true,
+            "justificacion_calificacion": "Cumple todos los requisitos",
+            "prioridad_score": 85
+        }}
+
+        Avisos para analizar:
         {json.dumps(batch, ensure_ascii=False)}
         """
 
+        payload = {
+            "contents": [{"parts": [{"text": prompt}]}],
+            "generationConfig": {
+                "response_mime_type": "application/json"
+            }
+        }
+
         try:
-            response = client.models.generate_content(
-                model="gemini-2.0-flash",
-                contents=prompt,
-                config={
-                    "response_mime_type": "application/json",
-                    "response_schema": list[EvaluacionAlquiler],
-                },
-            )
-            data = json.loads(response.text)
-            for item in data:
-                ev = EvaluacionAlquiler(**item) if isinstance(item, dict) else item
-                if ev.cumple_estricto:
-                    cumplen.append(ev)
+            resp = requests.post(gemini_url, json=payload, timeout=40)
+            if resp.status_code == 200:
+                data = resp.json()
+                texto_json = data["candidates"][0]["content"]["parts"][0]["text"]
+                items = json.loads(texto_json)
+                for item in items:
+                    if item.get("cumple_estricto"):
+                        cumplen.append(item)
+            else:
+                print(f"Error en llamada a Gemini API ({resp.status_code}): {resp.text}")
         except Exception as e:
             print(f"Error evaluando lote con Gemini: {e}")
 
-    cumplen.sort(key=lambda x: x.prioridad_score, reverse=True)
+    cumplen.sort(key=lambda x: x.get("prioridad_score", 0), reverse=True)
     return cumplen
 
 # ================= 3. Exportador a Google Drive =================
-def subir_reporte_drive(total_evaluadas: int, propiedades: List[EvaluacionAlquiler]):
+def subir_reporte_drive(total_evaluadas: int, propiedades: List[dict]):
     if not propiedades:
         print("No se encontraron propiedades que cumplan todos los requisitos hoy. No se crea archivo.")
         return
 
-    sa_info = json.loads(os.environ.get("GCP_SA_KEY"))
+    sa_raw = os.environ.get("GCP_SA_KEY")
+    if not sa_raw:
+        print("ERROR: No se encontró GCP_SA_KEY en las variables de entorno.")
+        return
+
+    sa_info = json.loads(sa_raw)
     creds = service_account.Credentials.from_service_account_info(
         sa_info, scopes=["https://www.googleapis.com/auth/drive"]
     )
@@ -201,15 +213,20 @@ def subir_reporte_drive(total_evaluadas: int, propiedades: List[EvaluacionAlquil
     """
 
     for idx, prop in enumerate(propiedades, 1):
+        gc = prop.get('gastos_comunes_uyu')
+        gc_str = f"${gc:,.0f} UYU" if gc else "No especificados / $0"
+        m2 = prop.get('metros_cuadrados')
+        m2_str = f"{m2} m²" if m2 else "N/A"
+
         html_content += f"""
-        <h2>{idx}. <a href="{prop.url}" target="_blank">{prop.titulo}</a></h2>
+        <h2>{idx}. <a href="{prop.get('url', '#')}" target="_blank">{prop.get('titulo', 'Sin título')}</a></h2>
         <ul>
-            <li><strong>Ubicación:</strong> {prop.barrio}</li>
-            <li><strong>Precio base:</strong> ${prop.precio_base_uyu:,.0f} UYU</li>
-            <li><strong>Gastos comunes:</strong> {'$' + f'{prop.gastos_comunes_uyu:,.0f} UYU' if prop.gastos_comunes_uyu else 'No especificados / $0'}</li>
-            <li><strong>Costo total estimado:</strong> ${prop.costo_total_estimado:,.0f} UYU</li>
-            <li><strong>Características:</strong> {prop.dormitorios} dorm | {prop.metros_cuadrados or 'N/A'} m² | Exterior: {prop.detalle_espacio_exterior} | Cochera: {prop.detalle_cochera}</li>
-            <li><strong>Justificación:</strong> {prop.justificacion_calificacion}</li>
+            <li><strong>Ubicación:</strong> {prop.get('barrio', '')}</li>
+            <li><strong>Precio base:</strong> ${prop.get('precio_base_uyu', 0):,.0f} UYU</li>
+            <li><strong>Gastos comunes:</strong> {gc_str}</li>
+            <li><strong>Costo total estimado:</strong> ${prop.get('costo_total_estimado', 0):,.0f} UYU</li>
+            <li><strong>Características:</strong> {prop.get('dormitorios', 1)} dorm | {m2_str} | Exterior: {prop.get('detalle_espacio_exterior', '')} | Cochera: {prop.get('detalle_cochera', '')}</li>
+            <li><strong>Justificación:</strong> {prop.get('justificacion_calificacion', '')}</li>
         </ul>
         """
 
