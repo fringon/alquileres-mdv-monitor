@@ -116,7 +116,7 @@ def evaluar_con_gemini(textos_avisos: List[str]) -> List[dict]:
         print("ERROR: No se encontró GEMINI_API_KEY en las variables de entorno.")
         return []
 
-    gemini_url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key={api_key}"
+    gemini_url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-3.6-flash:generateContent?key={api_key}"
     cumplen = []
     
     # Procesar en lotes de 10 avisos
