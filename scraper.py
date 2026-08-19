@@ -116,14 +116,14 @@ def evaluar_con_gemini(textos_avisos: List[str]) -> List[dict]:
         print("ERROR: No se encontró GEMINI_API_KEY en las variables de entorno.")
         return []
 
-    gemini_url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key={api_key}"
+    gemini_url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key={api_key}"
     cumplen = []
     
     # Procesar en lotes de 10 avisos
     batch_size = 10
     for i in range(0, len(textos_avisos), batch_size):
         batch = textos_avisos[i : i + batch_size]
-        print(f"Evaluando lote de {len(batch)} propiedades con Gemini 2.0...")
+        print(f"Evaluando lote de {len(batch)} propiedades con Gemini...")
         prompt = f"""
         Eres un auditor inmobiliario estricto para Montevideo (Malvín, Punta Gorda, Carrasco).
         Evalúa las siguientes publicaciones de alquiler con estos requisitos ESTRICTOS:
