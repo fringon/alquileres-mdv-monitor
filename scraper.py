@@ -118,7 +118,7 @@ def obtener_detalle_publicacion(url: str) -> str:
     except Exception:
         return ""
 
-# ================= 2. Evaluador Gemini (REST API con Reintentos) =================
+# ================= 2. Evaluador Gemini (Con Fallback de Modelos) =================
 def evaluar_con_gemini(textos_avisos: List[str]) -> List[dict]:
     if not textos_avisos:
         return []
@@ -128,10 +128,11 @@ def evaluar_con_gemini(textos_avisos: List[str]) -> List[dict]:
         print("ERROR: No se encontró GEMINI_API_KEY en las variables de entorno.")
         return []
 
-    gemini_url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-3.6-flash:generateContent?key={api_key}"
+    # Lista de modelos de respaldo en orden de preferencia
+    modelos_disponibles = ["gemini-3.6-flash", "gemini-2.5-flash", "gemini-1.5-flash"]
     cumplen = []
     
-    # Procesar en lotes de 5 avisos para máxima precisión
+    # Procesar en lotes de 5 avisos
     batch_size = 5
     for i in range(0, len(textos_avisos), batch_size):
         batch = textos_avisos[i : i + batch_size]
@@ -177,27 +178,36 @@ def evaluar_con_gemini(textos_avisos: List[str]) -> List[dict]:
             }
         }
 
-        # Intentar hasta 3 veces con retroceso si hay alta demanda (503/429)
-        for intento in range(3):
-            try:
-                resp = requests.post(gemini_url, json=payload, timeout=40)
-                if resp.status_code == 200:
-                    data = resp.json()
-                    texto_json = data["candidates"][0]["content"]["parts"][0]["text"]
-                    items = json.loads(texto_json)
-                    for item in items:
-                        if item.get("cumple_estricto"):
-                            cumplen.append(item)
-                    break
-                elif resp.status_code in [503, 429]:
-                    print(f"Gemini temporalmente ocupado (intento {intento+1}/3), reintentando en 3s...")
-                    time.sleep(3)
-                else:
-                    print(f"Error en llamada a Gemini API ({resp.status_code}): {resp.text}")
-                    break
-            except Exception as e:
-                print(f"Error evaluando lote con Gemini (intento {intento+1}/3): {e}")
-                time.sleep(2)
+        evaluado_con_exito = False
+        for modelo in modelos_disponibles:
+            if evaluado_con_exito:
+                break
+            
+            gemini_url = f"https://generativelanguage.googleapis.com/v1beta/models/{modelo}:generateContent?key={api_key}"
+            
+            for intento in range(2):
+                try:
+                    resp = requests.post(gemini_url, json=payload, timeout=35)
+                    if resp.status_code == 200:
+                        data = resp.json()
+                        texto_json = data["candidates"][0]["content"]["parts"][0]["text"]
+                        items = json.loads(texto_json)
+                        for item in items:
+                            if item.get("cumple_estricto"):
+                                cumplen.append(item)
+                        evaluado_con_exito = True
+                        break
+                    elif resp.status_code in [503, 429]:
+                        print(f"Modelo {modelo} saturado temporalmente, reintentando...")
+                        time.sleep(3)
+                    else:
+                        # Si da otro error (ej 404), pasar al siguiente modelo
+                        break
+                except Exception as e:
+                    time.sleep(2)
+
+        if not evaluado_con_exito:
+            print("Aviso: No se pudo evaluar este lote tras probar los modelos de respaldo.")
 
     cumplen.sort(key=lambda x: x.get("prioridad_score", 0), reverse=True)
     return cumplen
