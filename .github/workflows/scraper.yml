@@ -1,0 +1,29 @@
+name: Monitor Diario Alquileres Montevideo
+
+on:
+  schedule:
+    # 21:50 hora de Uruguay (UTC-3) -> 00:50 UTC del día siguiente
+    - cron: '50 0 * * *'
+  workflow_dispatch:
+
+jobs:
+  ejecutar-monitor:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Descargar repositorio
+        uses: actions/checkout@v4
+
+      - name: Configurar Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+
+      - name: Instalar librerías
+        run: pip install -r requirements.txt
+
+      - name: Ejecutar Extractor y Evaluador
+        env:
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          GCP_SA_KEY: ${{ secrets.GCP_SA_KEY }}
+        run: python scraper.py
