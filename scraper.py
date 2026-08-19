@@ -16,19 +16,15 @@ from googleapiclient.http import MediaIoBaseUpload
 DRIVE_FOLDER_ID = "1Hvr7ARrIa9UL72jJqnhutkt3d1x8r9nT"
 
 URLS_BUSQUEDA = [
-    # Malvín
-    "https://listado.mercadolibre.com.uy/inmuebles/apartamentos/alquiler/montevideo/malvin/_PriceRange_0UYU-40000UYU_PublishedToday_YES",
-    "https://listado.mercadolibre.com.uy/inmuebles/apartamentos/alquiler/montevideo/malvin/_PriceRange_0UYU-40000UYU",
-    "https://listado.mercadolibre.com.uy/inmuebles/casas/alquiler/montevideo/malvin/_PriceRange_0UYU-40000UYU_PublishedToday_YES",
-    "https://listado.mercadolibre.com.uy/inmuebles/casas/alquiler/montevideo/malvin/_PriceRange_0UYU-40000UYU",
-    # Punta Gorda
-    "https://listado.mercadolibre.com.uy/inmuebles/apartamentos/alquiler/montevideo/punta-gorda/_PriceRange_0UYU-40000UYU_PublishedToday_YES",
-    "https://listado.mercadolibre.com.uy/inmuebles/apartamentos/alquiler/montevideo/punta-gorda/_PriceRange_0UYU-40000UYU",
-    "https://listado.mercadolibre.com.uy/inmuebles/casas/alquiler/montevideo/punta-gorda/_PriceRange_0UYU-40000UYU",
-    # Carrasco
-    "https://listado.mercadolibre.com.uy/inmuebles/apartamentos/alquiler/montevideo/carrasco/_PriceRange_0UYU-40000UYU_PublishedToday_YES",
-    "https://listado.mercadolibre.com.uy/inmuebles/apartamentos/alquiler/montevideo/carrasco/_PriceRange_0UYU-40000UYU",
-    "https://listado.mercadolibre.com.uy/inmuebles/casas/alquiler/montevideo/carrasco/_PriceRange_0UYU-40000UYU",
+    # Malvín (Publicados hoy hasta 40.000 UYU)
+    "https://listado.mercadolibre.com.uy/inmuebles/apartamentos/alquiler/montevideo/malvin/_PriceRange_0UYU-40000UYU_PublishedToday_YES_NoIndex_True",
+    "https://listado.mercadolibre.com.uy/inmuebles/casas/alquiler/montevideo/malvin/_PriceRange_0UYU-40000UYU_PublishedToday_YES_NoIndex_True",
+    # Punta Gorda (Publicados hoy hasta 40.000 UYU)
+    "https://listado.mercadolibre.com.uy/inmuebles/apartamentos/alquiler/montevideo/punta-gorda/_PriceRange_0UYU-40000UYU_PublishedToday_YES_NoIndex_True",
+    "https://listado.mercadolibre.com.uy/inmuebles/casas/alquiler/montevideo/punta-gorda/_PriceRange_0UYU-40000UYU_PublishedToday_YES_NoIndex_True",
+    # Carrasco (Publicados hoy hasta 40.000 UYU)
+    "https://listado.mercadolibre.com.uy/inmuebles/apartamentos/alquiler/montevideo/carrasco/_PriceRange_0UYU-40000UYU_PublishedToday_YES_NoIndex_True",
+    "https://listado.mercadolibre.com.uy/inmuebles/casas/alquiler/montevideo/carrasco/_PriceRange_0UYU-40000UYU_PublishedToday_YES_NoIndex_True",
 ]
 
 HEADERS = {
@@ -65,13 +61,12 @@ def extraer_publicaciones_del_dia():
         try:
             resp = requests.get(url_cat, headers=HEADERS, timeout=15)
             if resp.status_code != 200:
-                print(f"[HTTP {resp.status_code}] Saltando categoría: {url_cat}")
+                print(f"[HTTP {resp.status_code}] Sin resultados en: {url_cat.split('/')[-1]}")
                 continue
 
             soup = BeautifulSoup(resp.text, "html.parser")
             enlaces = soup.find_all("a", href=re.compile(r"/MLU-\d+"))
-            es_url_hoy = "_PublishedToday_YES" in url_cat
-
+            
             candidatas_categoria = 0
             for a_tag in enlaces:
                 raw_url = a_tag["href"].split("#")[0].split("?")[0]
@@ -79,23 +74,11 @@ def extraer_publicaciones_del_dia():
                     continue
                 urls_vistas.add(raw_url)
                 total_evaluadas += 1
+                publicaciones_candidatas.append(raw_url)
+                candidatas_categoria += 1
 
-                # Evaluar etiqueta de fecha en la tarjeta
-                padre = a_tag.find_parent(["li", "div", "article"])
-                texto_tarjeta = padre.get_text(" ", strip=True).lower() if padre else ""
-
-                es_de_hoy = es_url_hoy or (
-                    "publicado hoy" in texto_tarjeta 
-                    or "hoy" in texto_tarjeta 
-                    or ("hace " in texto_tarjeta and ("hora" in texto_tarjeta or "minuto" in texto_tarjeta))
-                )
-
-                if es_de_hoy and raw_url not in publicaciones_candidatas:
-                    publicaciones_candidatas.append(raw_url)
-                    candidatas_categoria += 1
-
-            nombre_cat = url_cat.split("inmuebles/")[-1].split("/_")[0]
-            print(f"Categoría: {nombre_cat} | Enlaces encontrados: {len(enlaces)} | De hoy: {candidatas_categoria}")
+            cat_nombre = url_cat.split("inmuebles/")[-1].split("/_")[0]
+            print(f"[{cat_nombre}] Encontradas hoy: {candidatas_categoria}")
 
         except Exception as e:
             print(f"Error escaneando categoría {url_cat}: {e}")
@@ -134,8 +117,8 @@ def evaluar_con_gemini(textos_avisos: List[str]) -> List[EvaluacionAlquiler]:
     client = genai.Client(api_key=os.environ.get("GEMINI_API_KEY"))
     cumplen = []
     
-    # Procesar en lotes de 15 avisos
-    batch_size = 15
+    # Procesar en lotes de 10 avisos para máxima precisión
+    batch_size = 10
     for i in range(0, len(textos_avisos), batch_size):
         batch = textos_avisos[i : i + batch_size]
         print(f"Evaluando lote de {len(batch)} propiedades con Gemini 2.0...")
@@ -234,12 +217,13 @@ if __name__ == "__main__":
     print(f"Total publicaciones evaluadas: {total_evaluadas} | Publicadas hoy: {len(urls_hoy)}")
 
     detalles = []
-    for u in urls_hoy:
+    print(f"Descargando fichas de {len(urls_hoy)} publicaciones...")
+    for idx, u in enumerate(urls_hoy, 1):
         txt = obtener_detalle_publicacion(u)
         if txt:
             detalles.append(txt)
 
     propiedades_aprobadas = evaluar_con_gemini(detalles)
-    print(f"Propiedades que cumplen todos los criterios: {len(propiedades_aprobadas)}")
+    print(f"\nPropiedades que cumplen todos los criterios: {len(propiedades_aprobadas)}")
 
     subir_reporte_drive(total_evaluadas, propiedades_aprobadas)
