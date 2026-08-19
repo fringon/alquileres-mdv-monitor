@@ -67,9 +67,11 @@ def extraer_publicaciones_del_dia():
     urls_vistas = set()
 
     for etiqueta, url_cat in URLS_BUSQUEDA:
+        time.sleep(1.5)  # Pausa de cortesía para evitar rate limiting de MercadoLibre
         try:
             html = descargar_html(url_cat, timeout=15)
-            if not html:
+            if not html or len(html) < 30000:
+                print(f"[{etiqueta}] Aviso: Respuesta vacía o reducida ({len(html)} bytes).")
                 continue
 
             soup = BeautifulSoup(html, "html.parser")
@@ -267,6 +269,7 @@ if __name__ == "__main__":
     detalles = []
     print(f"Descargando fichas de {len(urls_hoy)} publicaciones...")
     for idx, u in enumerate(urls_hoy, 1):
+        time.sleep(0.8)
         txt = obtener_detalle_publicacion(u)
         if txt:
             detalles.append(txt)
