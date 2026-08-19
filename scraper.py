@@ -65,25 +65,29 @@ def extraer_publicaciones_del_dia():
                 continue
 
             soup = BeautifulSoup(resp.text, "html.parser")
-            items = soup.select("li.ui-search-layout__item, div.ui-search-result__wrapper, div.poly-card, div.poly-card__content")
-
+            
+            # Selector universal: capturar enlaces a publicaciones MLU sin depender de clases CSS específicas
+            enlaces = soup.find_all("a", href=re.compile(r"/MLU-\d+"))
             es_url_hoy = "_PublishedToday_YES" in url_cat
 
-            for item in items:
+            for a_tag in enlaces:
+                raw_url = a_tag["href"].split("#")[0].split("?")[0]
+                if raw_url in urls_vistas:
+                    continue
+                urls_vistas.add(raw_url)
                 total_evaluadas += 1
-                link_tag = item.select_one("a.poly-component__title, a.ui-search-link, a[href*='MLU-']")
-                if not link_tag or not link_tag.get("href"):
-                    continue
 
-                raw_url = link_tag["href"].split("#")[0].split("?")[0]
-                if not re.search(r"/MLU-\d+", raw_url) or raw_url in urls_vistas:
-                    continue
+                # Buscar el contenedor padre de la tarjeta para evaluar fecha/etiqueta
+                padre = a_tag.find_parent(["li", "div", "article"])
+                texto_tarjeta = padre.get_text(" ", strip=True).lower() if padre else ""
 
-                item_text = item.get_text(" ", strip=True).lower()
-                es_de_hoy = es_url_hoy or ("publicado hoy" in item_text or "hace " in item_text and ("hora" in item_text or "minuto" in item_text))
+                es_de_hoy = es_url_hoy or (
+                    "publicado hoy" in texto_tarjeta 
+                    or "hoy" in texto_tarjeta 
+                    or ("hace " in texto_tarjeta and ("hora" in texto_tarjeta or "minuto" in texto_tarjeta))
+                )
 
-                if es_de_hoy:
-                    urls_vistas.add(raw_url)
+                if es_de_hoy and raw_url not in publicaciones_candidatas:
                     publicaciones_candidatas.append(raw_url)
 
         except Exception as e:
