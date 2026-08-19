@@ -236,6 +236,8 @@ def subir_reporte_drive(total_evaluadas: int, propiedades: List[dict]):
         try:
             payload = {
                 "nombre_archivo": nombre_archivo,
+                "total_evaluadas": total_evaluadas,
+                "propiedades": propiedades,
                 "texto_reporte": texto_reporte
             }
             resp = requests.post(apps_script_url, json=payload, timeout=30)
